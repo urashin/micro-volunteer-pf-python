@@ -1,10 +1,10 @@
 from flask import Flask, request, abort
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage
+from linebot.models import MessageEvent, TextMessage, LocationSendMessage, FlexSendMessage, FlexContainer
 import config
-# from Db import Users, SnsId
 from Rdb import Users, SnsId, Session
+from Web.Dto import ActionMessageDto
 
 prefix = config.line_messaging_web_prefix
 
@@ -14,6 +14,95 @@ handler = WebhookHandler(config.line_messaging_channel_secret)
 
 def send_message(user_id: str, message: str):
     messages = TextMessage(text=message)
+    line_bot_api.push_message(user_id, messages)
+
+
+def send_location(user_id: str, title: str, address: str, latitude: float, longitude: float):
+    messages = LocationSendMessage(title, address, latitude, longitude)
+    line_bot_api.push_message(user_id, messages)
+
+
+def send_action_message(user_id: str, action_message: ActionMessageDto):
+    # @ref https://developers.line.biz/flex-simulator/
+    js = {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "Title",  # update
+                    "weight": "bold",
+                    "size": "xl"
+                },
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "lg",
+                    "spacing": "sm",
+                    "contents": [
+                        # insert
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "spacing": "sm",
+            "contents": [
+                # insert
+            ],
+            "flex": 0
+        }
+    }
+    [title_block, details_block] = js["body"]["contents"]
+    title_block["text"] = action_message.title
+    for detail in action_message.details:
+        row = {
+            "type": "box",
+            "layout": "baseline",
+            "spacing": "sm",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": detail.label,
+                    "color": "#aaaaaa",
+                    "size": "sm",
+                    "flex": 1
+                },
+                {
+                    "type": "text",
+                    "text": detail.text,
+                    "wrap": True,
+                    "color": "#666666",
+                    "size": "sm",
+                    "flex": 5
+                }
+            ]
+        }
+        contents: list[dict] = details_block["contents"]
+        contents.append(row)
+
+    footer_block: list[dict] = js["footer"]["contents"]
+    for k, v in action_message.actions.__dict__.items():
+        if v is None:
+            continue
+        is_primary = k == "primary"
+        t = {
+            "type": "button",
+            "style": "primary" if is_primary else "link",
+            "height": "md" if is_primary else "sm",
+            "action": {
+                "type": "uri",
+                "label": v.text,
+                "uri": v.link
+            }
+        }
+        footer_block.append(t)
+
+    messages = FlexSendMessage(alt_text=action_message.title, contents=js)
     line_bot_api.push_message(user_id, messages)
 
 
@@ -47,72 +136,14 @@ def response_message(event: MessageEvent):
     message = event.message
     if not isinstance(message, TextMessage):
         return
-    command = message.text.lower().strip()
-    try:
-        if command.startswith("create"):
-            arg = command.split(" ")[1:]
-            user_id, password, name = arg
-            # Users.create_user(user_id, password, name)
-            # SnsId.insert_sns(user_id, event.source.sender_id, "LINE")
-            from uuid import uuid4
-            session_id = uuid4().hex
-            sns_id = event.source.sender_id
-            Users.set_user(user_id, password, name, f"{user_id}@example.com")
-            Session.set_session(session_id, user_id)
-            SnsId.set_sns_id(sns_id, user_id)
-
-            line_bot_api.reply_message(event.reply_token,
-                                       messages=TextMessage(text=f"user `{user_id}` created"))
-            return
-
-        elif command.startswith("login"):
-            arg = command.split(" ")[1:]
-            user_id, password = arg
-            # token = Users.login(user, password)
-            user = Users.get_user(user_id)
-            if user is None or user.password != password:
-                raise Exception("password incorrect")
-            session = Session.get_session_by_user_id(user_id)
-            token = session.session_id
-            line_bot_api.reply_message(event.reply_token,
-                                       messages=TextMessage(text=f"logged in `{token}`"))
-            return
-
-        elif command.startswith("greet"):
-            arg = command.split(" ")[1:]
-            token = arg.pop(0)
-            # user = Users.get_user_by_token(token)
-            # if user is None:
-            #     line_bot_api.reply_message(event.reply_token,
-            #                                messages=TextMessage(text="invalid token"))
-            #     return
-            #
-            text = " ".join(arg)
-            # sns_ids = SnsId.get_all_sns_by_type("LINE")
-            # for sns_id in sns_ids:
-            #     send_message(sns_id.sns_id, f"{user.name}さんからbroadcast: {text}")
-            session = Session.get_session(token)
-            if session is None:
-                raise Exception("invalid session")
-            user = Users.get_user(session.user_id)
-            sns_ids = SnsId.get_all_sns_id()
-            for sns_id in sns_ids:
-                send_message(sns_id.sns_id, f"{user.name}さんからbroadcast: {text}")
-            return
-
-    except Exception as e:
-        import traceback
-        traceback.format_exc()
-        line_bot_api.reply_message(event.reply_token,
-                                   messages=TextMessage(text="command error: " + str(e)))
-        return
 
     line_id = event.source.sender_id
     sns_id = SnsId.get_sns_id(line_id)
     if sns_id is None:
         from Java import SnsRegister
         java_response = SnsRegister.sns_register(line_id, 1)
-        messages = TextMessage(text=f"はじめまして！ こちらから登録をお願いします！  {config.deeplink_host}/sns-register?sns_id={line_id}&token={java_response.token}")
+        messages = TextMessage(
+            text=f"はじめまして！ こちらから登録をお願いします！  {config.deeplink_host}/sns-register?sns_id={line_id}&token={java_response.token}")
         line_bot_api.reply_message(event.reply_token, messages=messages)
         return
     else:
