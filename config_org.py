@@ -11,9 +11,6 @@ line_messaging_web_prefix = environ.get("LINE_MESSAGING_WEB_PREFIX", "/messaging
 line_messaging_channel_access_token = environ.get("LINE_MESSAGING_CHANNEL_ACCESS_TOKEN", "...")
 line_messaging_channel_secret = environ.get("LINE_MESSAGING_CHANNEL_SECRET", "...")
 
-redis_host = environ.get("REDIS_HOST", "redis.server")
-redis_port = environ.get("REDIS_PORT", 6379)
-
 mysql_host = environ.get("MYSQL_HOST", 'mysql.server')
 mysql_port = environ.get("MYSQL_PORT", 3306)
 mysql_user = environ.get("MYSQL_USER", 'volunteer')
